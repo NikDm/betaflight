@@ -89,6 +89,15 @@ static pthread_mutex_t updateLock;
 static pthread_mutex_t mainLoopLock;
 static char simulator_ip[32] = "127.0.0.1";
 
+// Just some help for logging
+// #if defined(SIM_AIRSIM)
+//     static char simulator_name[] = "AirSim";
+// #elif defined(SIM_GAZEBO)
+//     static char simulator_name[] = "Gazebo";
+// #elif defined(SIM_REALFLIGHT)
+//     static char simulator_name[] = "Realflight bridge";
+// #endif
+
 #define PORT_PWM_RAW    9001    // Out
 #define PORT_PWM        9002    // Out
 #define PORT_STATE      9003    // In
@@ -132,7 +141,7 @@ static void updateState(const fdm_packet* pkt)
     clock_gettime(CLOCK_MONOTONIC, &now_ts);
 
     const uint64_t realtime_now = micros64_real();
-    if (realtime_now > last_realtime + 500*1e3) { // 500ms timeout
+    if (realtime_now > last_realtime + 600*1e3) { // 500ms timeout
         last_timestamp = pkt->timestamp;
         last_realtime = realtime_now;
         sendMotorUpdate();
@@ -591,15 +600,25 @@ static void pwmCompleteMotorUpdate(void)
     // send to simulator
     // for gazebo8 ArduCopterPlugin remap, normal range = [0.0, 1.0], 3D rang = [-1.0, 1.0]
 
-    double outScale = 1000.0;
-    if (featureIsEnabled(FEATURE_3D)) {
-        outScale = 500.0;
-    }
+    #if defined(SITL_GAZEBO)  // for gazebo8 ArduCopterPlugin remap, normal range = [0.0, 1.0], 3D rang = [-1.0, 1.0]
+        double outScale = 1000.0;
+        if (featureIsEnabled(FEATURE_3D)) {
+            outScale = 500.0;
+        }
+        // airsim quad x map
+        pwmPkt.motor_speed[3] = motorsPwm[0] / outScale;
+        pwmPkt.motor_speed[0] = motorsPwm[1] / outScale;
+        pwmPkt.motor_speed[1] = motorsPwm[2] / outScale;
+        pwmPkt.motor_speed[2] = motorsPwm[3] / outScale;
+    #else
+    // for airsim, (0,1) mapping is done in BetaflightApi.hpp. So just send raw pwm
+    // Realflight bridge also requires only raw pwm.
+        pwmPkt.motor_speed[3] = motorsPwm[0] + idlePulse;
+        pwmPkt.motor_speed[0] = motorsPwm[1] + idlePulse;
+        pwmPkt.motor_speed[1] = motorsPwm[2] + idlePulse;
+        pwmPkt.motor_speed[2] = motorsPwm[3] + idlePulse;
 
-    pwmPkt.motor_speed[3] = motorsPwm[0] / outScale;
-    pwmPkt.motor_speed[0] = motorsPwm[1] / outScale;
-    pwmPkt.motor_speed[1] = motorsPwm[2] / outScale;
-    pwmPkt.motor_speed[2] = motorsPwm[3] / outScale;
+    #endif
 
     // get one "fdm_packet" can only send one "servo_packet"!!
     if (pthread_mutex_trylock(&updateLock) != 0) return;

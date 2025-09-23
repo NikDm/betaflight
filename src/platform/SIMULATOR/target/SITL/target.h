@@ -156,6 +156,8 @@
 
 #define FLASH_PAGE_SIZE (0x400)
 
+#define SIM_AIRSIM  // options: SIM_AIRSIM, SIM_GAZEBO, SIM_REALFLIGHT
+
 // belows are internal stuff
 
 extern uint32_t SystemCoreClock;
