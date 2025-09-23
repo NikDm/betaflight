@@ -507,6 +507,7 @@ void disarm(flightLogDisarmReason_e reason)
 #ifdef USE_DSHOT
         setMotorSpinDirection(DSHOT_CMD_SPIN_DIRECTION_NORMAL);
 #endif
+        flipOverAfterCrashActive = false;
 
         // if ARMING_DISABLED_RUNAWAY_TAKEOFF is set then we want to play it's beep pattern instead
         if (!(getArmingDisableFlags() & (ARMING_DISABLED_RUNAWAY_TAKEOFF | ARMING_DISABLED_CRASH_DETECTED))) {

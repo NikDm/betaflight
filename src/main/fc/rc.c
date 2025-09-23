@@ -308,6 +308,19 @@ void updateRcRefreshRate(timeUs_t currentTimeUs, bool rxReceivingSignal)
         }
     }
 
+    // Throttle buffering logic from airsim-sitl branch
+    static int index;
+    static int16_t rcCommandThrottlePrevious[THROTTLE_BUFFER_MAX];
+
+    const int rxRefreshRateMs = MAX(rxRefreshRate / 1000, 1);
+    const int indexMax = constrain(THROTTLE_DELTA_MS / rxRefreshRateMs, 1, THROTTLE_BUFFER_MAX);
+    const int16_t throttleVelocityThreshold = (featureIsEnabled(FEATURE_3D)) ? currentPidProfile->itermThrottleThreshold / 2 : currentPidProfile->itermThrottleThreshold;
+
+    rcCommandThrottlePrevious[index++] = rcCommand[THROTTLE];
+    if (index >= indexMax) {
+        index = 0;
+    }
+
     // constrain to a frequency range no lower than about 15Hz and up to about 1000Hz
     // these intervals and rates will be used for RCSmoothing, Feedforward, etc.
     currentRxIntervalUs = constrain(delta, RX_INTERVAL_MIN_US, RX_INTERVAL_MAX_US);

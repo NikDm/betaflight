@@ -32,7 +32,12 @@ void run(void);
 int main(int argc, char * argv[])
 {
 #ifdef USE_MAIN_ARGS
+#ifdef SIMULATOR_BUILD
     targetParseArgs(argc, argv);
+#else
+    UNUSED(argc);
+    UNUSED(argv);
+#endif
 #else
     UNUSED(argc);
     UNUSED(argv);
