@@ -89,6 +89,9 @@ static pthread_mutex_t updateLock;
 static pthread_mutex_t mainLoopLock;
 static char simulator_ip[32] = "127.0.0.1";
 
+// UDP logging for port 9004
+static FILE *udpLogFile = NULL;
+
 #define PORT_PWM_RAW    9001    // Out
 #define PORT_PWM        9002    // Out
 #define PORT_STATE      9003    // In
@@ -261,6 +264,68 @@ static uint8_t rxRCFrameStatus(rxRuntimeState_t *rxRuntimeState)
     return RX_FRAME_COMPLETE;
 }
 
+// Function to read RC data using rcReadRawFn like rx.c does
+static float sitlReadRCChannel(uint8_t channel)
+{
+    if (rxRuntimeState.rcReadRawFn && rc_received) {
+        return rxRuntimeState.rcReadRawFn(&rxRuntimeState, channel);
+    }
+    return 0.0f; // Return neutral if no RC data available
+}
+
+// Function to read all RC channels and log them
+static void sitlLogAllRCChannels(void)
+{
+    if (!rc_received || !rxRuntimeState.rcReadRawFn) {
+        return;
+    }
+    
+    printf("[SITL] RC Channels via rcReadRawFn: ");
+    for (uint8_t i = 0; i < SIMULATOR_MAX_RC_CHANNELS; i++) {
+        float value = rxRuntimeState.rcReadRawFn(&rxRuntimeState, i);
+        printf("CH%d:%.0f ", i, (double)value);
+    }
+    printf("\n");
+    
+    // Log specific channels with names
+    // printf("[SITL] RC Named Channels: ");
+    // printf("AIL:%.0f ELE:%.0f THR:%.0f RUD:%.0f ", 
+    //        (double)sitlReadRCChannel(0), (double)sitlReadRCChannel(1), 
+    //        (double)sitlReadRCChannel(2), (double)sitlReadRCChannel(3));
+    // printf("AUX1:%.0f AUX2:%.0f AUX3:%.0f AUX4:%.0f\n",
+    //        (double)sitlReadRCChannel(4), (double)sitlReadRCChannel(5), 
+    //        (double)sitlReadRCChannel(6), (double)sitlReadRCChannel(7));
+}
+
+// Public function to get RC channel value (can be called from other parts of SITL)
+float sitlGetRCChannelValue(uint8_t channel)
+{
+    return sitlReadRCChannel(channel);
+}
+
+// Public function to get throttle value specifically
+float sitlGetThrottleValue(void)
+{
+    return sitlReadRCChannel(2); // Throttle is on channel 2
+}
+
+// Public function to check if RC data is available
+bool sitlIsRCDataAvailable(void)
+{
+    return rc_received && rxRuntimeState.rcReadRawFn != NULL;
+}
+
+// Function to re-register RC functions after rxInit() overwrites them
+void sitlReRegisterRCFunctions(void)
+{
+    if (rc_received) {
+        printf("[SITL] Re-registering RC functions after rxInit()\n");
+        rxRuntimeState.rcReadRawFn = readRCSITL;
+        rxRuntimeState.rcFrameStatusFn = rxRCFrameStatus;
+        rxRuntimeState.rxProvider = RX_PROVIDER_UDP;
+    }
+}
+
 static void *udpRCThread(void *data)
 {
     UNUSED(data);
@@ -281,6 +346,54 @@ static void *udpRCThread(void *data)
                 rxRuntimeState.rxProvider = RX_PROVIDER_UDP;
                 rc_received = true;
             }
+
+            // printf("[SITL] rc %d: t:%f AETR: %d %d %d %d AUX1-4: %d %d %d %d\n", n, rcPkt.timestamp,
+            //     rcPkt.channels[0], rcPkt.channels[1],rcPkt.channels[2],rcPkt.channels[3],
+            //     rcPkt.channels[4], rcPkt.channels[5],rcPkt.channels[6],rcPkt.channels[7]);
+            
+            // Demonstrate reading RC data using rcReadRawFn like rx.c does
+            sitlLogAllRCChannels();
+            
+            // Ensure RC functions are still registered (in case rxInit() overwrote them)
+            if (rxRuntimeState.rcReadRawFn != readRCSITL) {
+                printf("[SITL] RC functions were overwritten, re-registering...\n");
+                sitlReRegisterRCFunctions();
+            }
+            
+            // Log the received data
+            if (udpLogFile) {
+                struct timespec ts;
+                clock_gettime(CLOCK_REALTIME, &ts);
+                
+                fprintf(udpLogFile, "[%ld.%09ld] UDP9004 RC DATA: %d bytes from %s:%d\n", 
+                        ts.tv_sec, ts.tv_nsec, n, inet_ntoa(rcLink.recv.sin_addr), rcLink.recv.sin_port);
+                
+                // Log data as hex
+                uint8_t *data_ptr = (uint8_t*)&rcPkt;
+                for (int i = 0; i < n; i++) {
+                    fprintf(udpLogFile, "%02X ", data_ptr[i]);
+                }
+                fprintf(udpLogFile, "\n");
+                
+                // Log structured RC data
+                fprintf(udpLogFile, "RC Channels: ");
+                for (int i = 0; i < 8; i++) {
+                    fprintf(udpLogFile, "%d ", rcPkt.channels[i]);
+                }
+                fprintf(udpLogFile, "\n");
+                fprintf(udpLogFile, "Timestamp: %f\n\n", rcPkt.timestamp);
+                fflush(udpLogFile);
+            }
+        } else if (n > 0) {
+            // Log unexpected data sizes
+            if (udpLogFile) {
+                struct timespec ts;
+                clock_gettime(CLOCK_REALTIME, &ts);
+                fprintf(udpLogFile, "[%ld.%09ld] UDP9004 UNEXPECTED SIZE: %d bytes (expected %d) from %s:%d\n", 
+                        ts.tv_sec, ts.tv_nsec, n, (int)sizeof(rc_packet), inet_ntoa(rcLink.recv.sin_addr), rcLink.recv.sin_port);
+                fflush(udpLogFile);
+            }
+            printf("[SITL] Unexpected RC packet size: %d (expected %d)\n", n, (int)sizeof(rc_packet));
         }
     }
 
@@ -354,12 +467,30 @@ void systemInit(void)
         printf("Create udpRCThread error!\n");
         exit(1);
     }
+
+    // Initialize UDP logging for port 9004
+    udpLogFile = fopen("udp9004_log.txt", "w");
+    if (udpLogFile) {
+        printf("[SITL] UDP logging enabled for port 9004 - writing to udp9004_log.txt\n");
+        fprintf(udpLogFile, "=== UDP Port 9004 Log Started ===\n");
+        fflush(udpLogFile);
+    } else {
+        printf("[SITL] Warning: Could not open udp9004_log.txt for writing\n");
+    }
 }
 
 void systemReset(void)
 {
     printf("[system]Reset!\n");
     workerRunning = false;
+    
+    // Clean up UDP logging
+    if (udpLogFile) {
+        fprintf(udpLogFile, "=== UDP Port 9004 Log Ended ===\n");
+        fclose(udpLogFile);
+        udpLogFile = NULL;
+    }
+    
     pthread_join(tcpWorker, NULL);
     pthread_join(udpWorker, NULL);
     exit(0);
@@ -370,6 +501,14 @@ void systemResetToBootloader(bootloaderRequestType_e requestType)
 
     printf("[system]ResetToBootloader!\n");
     workerRunning = false;
+    
+    // Clean up UDP logging
+    if (udpLogFile) {
+        fprintf(udpLogFile, "=== UDP Port 9004 Log Ended ===\n");
+        fclose(udpLogFile);
+        udpLogFile = NULL;
+    }
+    
     pthread_join(tcpWorker, NULL);
     pthread_join(udpWorker, NULL);
     exit(0);
@@ -754,6 +893,8 @@ void debugInit(void)
 void unusedPinsInit(void)
 {
     printf("unusedPinsInit\n");
+    // Re-register RC functions after rxInit() has overwritten them
+    sitlReRegisterRCFunctions();
 }
 
 void IOHi(IO_t io)

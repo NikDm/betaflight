@@ -24,8 +24,15 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 #include "common/utils.h"
+
+// SITL RC reading functions
+float sitlGetRCChannelValue(uint8_t channel);
+float sitlGetThrottleValue(void);
+bool sitlIsRCDataAvailable(void);
+void sitlReRegisterRCFunctions(void);
 
 #define TARGET_BOARD_IDENTIFIER "SITL"
 
