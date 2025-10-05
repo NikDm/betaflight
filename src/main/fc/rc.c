@@ -309,6 +309,9 @@ void updateRcRefreshRate(timeUs_t currentTimeUs, bool rxReceivingSignal)
     }
 
     // Throttle buffering logic from airsim-sitl branch
+    // Note: This experimental code is disabled due to missing constants and fields
+    // TODO: Implement proper throttle buffering if needed
+    /*
     static int index;
     static int16_t rcCommandThrottlePrevious[THROTTLE_BUFFER_MAX];
 
@@ -320,6 +323,7 @@ void updateRcRefreshRate(timeUs_t currentTimeUs, bool rxReceivingSignal)
     if (index >= indexMax) {
         index = 0;
     }
+    */
 
     // constrain to a frequency range no lower than about 15Hz and up to about 1000Hz
     // these intervals and rates will be used for RCSmoothing, Feedforward, etc.
